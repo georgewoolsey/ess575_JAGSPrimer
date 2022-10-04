@@ -1,0 +1,450 @@
+---
+title: "ESS 575: Bayes Theorem Lab"
+author: "Team England" 
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    toc: false
+    toc_depth: 3
+linkcolor: blue
+header-includes:
+  - \usepackage{caption}
+  - \captionsetup[figure]{labelformat=empty}
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding){ 
+    out_dir <- '../';
+    rmarkdown::render(inputFile, encoding = encoding, output_file=file.path(dirname(inputFile), out_dir, 'JAGSPrimer_England.pdf')) 
+  })
+---
+
+Team England:
+
+  - Caroline Blommel
+  - Carolyn Coyle
+  - Bryn Crosby
+  - George Woolsey
+  
+cblommel@mail.colostate.edu, carolynm@mail.colostate.edu, brcrosby@rams.colostate.edu, george.woolsey@colostate.edu
+
+# Setup
+
+Download the R package [SESYNCBayes ver. 0.6](https://cchecastaldo.github.io/BayesianShortCourse/content/package/SESYNCBayes_0.6.0.tar.gz) to your computer.
+
+Run:
+
+`install.packages("<pathtoSESYNCBayes>/Packages/SESYNCBayes_0.6.0.tar.gz", repos = NULL, type = "source")`
+
+```{r setup, include=F}
+## load packages
+library(tidyverse)
+library(lubridate)
+library(viridis)
+library(scales)
+library(latex2exp)
+# visualization
+library(ggpubr)
+library(cowplot)
+# jags
+library(rjags)
+library(SESYNCBayes)
+library(MCMCvis)
+
+# knit options
+knitr::opts_chunk$set(
+  echo = TRUE
+  , warning = FALSE
+  , message = FALSE
+  , fig.height = 5
+  , fig.width = 7
+)
+
+```
+
+# Aim
+
+The purpose of [this Primer](https://nthobbs50.github.io/ESS575/content/lectures/JAGSPrimerMCMCVis.pdf) is to teach the programming skills needed to approximate the marginal posterior distributions of parameters, latent variables, and derived quantities of interest using software implementing Markov chain Monte Carlo methods. Along the way, we will reinforce some of the ideas and principles that we have learned in lecture. The Primer is organized primarily as a tutorial and contains only a modicum of reference material. You will need to study the JAGS manual at some point to become a fully competent programmer.
+
+# Example
+
+Consider a model predicting the per-capita rate of population growth (or the mass specific
+rate of nitrogen accumulation),
+
+\begin{equation}
+\frac{1}{N}\frac{dN}{dt}=r-\frac{r}{K}N,
+\end{equation}
+
+which, of course, is a linear model with intercept $r$ and slope $\frac{r}{K}$. Note that these quantities enjoy a sturdy biological interpretation in population ecology; $r$ is the intrinsic rate of increase, $\frac{r}{K}$ is the strength of the feedback from population size to population growth rate, and $K$ is the carrying capacity, that is, the population size (o.k., o.k., the gm $N$ per gm soil for the ecosystem scientists) at which $\frac{}{}$$\frac{dN}{dt}=0$. Presume we have some data consisting of observations of per capita rate of growth paired with observations of $N$. The vector $\mathbf{y}$ contains values for the rate and the vector $\mathbf{x}$ contains aligned data on $N$, i.e., $y_{i}=\frac{1}{N_{i}}\frac{dN_{i}}{dt},\, x_{i}=N_{i}$. To keep things simple, we start out by assuming that the $x_{i}$ are measured without error. A simple Bayesian model specifies the joint distribution of the parameters and data as: 
+
+\begin{eqnarray}
+\mu_{i} & = & r-\frac{rx_{i}}{K}\textrm{,}\\
+\left[\,r,K,\tau\mid\mathbf{y}\right] & \propto & \prod_{i=1}^{n}\left[\,y_{i}\mid\mu_{i},\tau\right]\left[r\right]\left[K\right]\left[\tau\right]\textrm{,}\nonumber \\
+\left[r,K,\tau\mid\mathbf{y}\right] & \propto & \prod_{i=1}^{n}\textrm{normal}\left(y_{i}\mid\mu_{i},\tau\right)\times\label{eq:conditional} \textrm{gamma}\left(K\mid.001,.001\right)\\
+ &  &\textrm{gamma}\left(\tau\mid.001,.001\right)\textrm{gamma}\left(r\mid.001,.001\right),\nonumber 
+\end{eqnarray}
+
+where the priors are vague distributions for quantities that must, by definition, be positive. Note that we have used the precision $(\tau)$ as a argument to the normal distribution rather than the variance $\left(\tau=\frac{1}{\sigma^{2}}\right)$ to keep things consistent with the code below, a requirement of the BUGS language. Now, we have full, abiding confidence that with a couple of hours worth of work, perhaps less, you could knock out a Gibbs sampler to estimate $r,K,$ and $\tau$. However, we are all for doing things nimbly in 15 minutes that might otherwise take a sweaty hour of hard labor.
+
+```{r, eval=FALSE}
+## Logistic example for Primer
+model{
+  # priors
+  K ~ dgamma(.001, .001) # dgamma(r,n)
+  r ~ dgamma(.001, .001) # dgamma(r,n)
+  tau ~ dgamma(.001, .001) # precision  # dgamma(r,n)
+  sigma <- 1/sqrt(tau) # calculate sd from precision
+  # likelihood
+  for (i in 1:n){
+    mu[i] <- r - r/K * x[i]
+    y[i] ~ dnorm(mu[i], tau) # dnorm(mu,tau)
+  }
+}
+```
+
+# Exercise 1: Factoring
+
+There is no $x$ in the posterior distribution in equation 4. What are assuming if $x$ is absent? Draw the Bayesian network, or DAG, for this model. Use the chain rule to fully factor the joint distribution into sensible parts then simplify by assuming that $r,K,$ and $\tau$ are independent.
+
+Factoring the joint using the chain rule:
+
+$$
+[r,K,\tau,y] = [ y \mid r, K, \tau ] \cdot [r \mid K, \tau]\cdot[K \mid \tau] \cdot[\tau]
+$$ 
+Assuming $r, K, \tau$ are independent:
+
+$$
+[r,K,\tau,y] = [ y \mid r, K, \tau ] \cdot [r]\cdot[K] \cdot[\tau]
+$$ 
+
+\textcolor{violet}{There is no $x$ because we are assuming it is measured without error.}
+
+# Exercise 2: Can you improve these priors? 
+
+A recurring theme in this course will be to use priors that are informative whenever possible. The gamma priors in equation 4 include *the entire number line > 0*. Don’t we know more about population biology than that? Let’s, say for now that we are modeling the population dynamics of a large mammal. How might you go about making the priors on population parameters more informative?
+
+\textcolor{violet}{The intrinsic rate of increase $r$ can plausibly take on values between 0 and 1. The only requirement for a vague prior is that its "range of uncertainty should be clearly wider that the range of reasonable values of the parameter". Similarly, we could use experience and knowledge to put some reasonable bounds on $K$ and even $\sigma$, which we can use to calculate $\tau$ as $\tau=\frac{1}{\sigma^{2}}$.}
+
+```{r, eval=FALSE}
+## Logistic example for Primer
+  model{
+  # priors
+  K ~ dunif(0, 4000) # dunif(alpha = lower limit, beta = upper limit)
+  r ~ dunif (0, 2) # dunif(alpha, beta)
+  sigma ~ dunif(0, 2) # dunif(alpha, beta)
+  tau <- 1/sigma^2
+  # likelihood
+  for(i in 1:n){
+    mu[i] <- r - r/K * x[i]
+    y[i] ~ dnorm(mu[i], tau) # dnorm(mu,tau)
+  }
+}
+
+```
+
+# Exercise 3: Using `for` loops. 
+
+Write a code fragment to set vague normal priors for 5 regression coefficients -- `dnorm(0, 0.000001)` -- stored in the vector `b`.
+
+```{r, eval=FALSE}
+b <- numeric(5)
+for(i in 1:length(b)){
+  b[i] ~ dnorm(0, 0.000001) # dnorm(mu,tau)
+}
+```
+
+
+# Stepping through a JAGS run
+
+We will go through the R code step by step. We start by loading the package `SESYNCBayes` which has the data frame Logistic, which we then order by `PopulationSize`. Next, we specify the initial conditions for the MCMC chain in the statement `inits`. This is exactly the same thing as you did when you wrote MCMC code and assigned a guess to the first element in the chain. Initial conditions must be specified as as “list of lists”, as you can see in the code. If you create a single list, rather than a list of lists, you will get an error message when you execute the `jags.model` statement and your code will not run. Second, this statement allows you to set up multiple chains, which are needed for some tests of convergence and to calculate DIC (more about these tasks later). For example, if you want three chains, you would use:
+
+```{r, eval=FALSE}
+inits = list(
+  list(K = 1500, r = .2, sigma = 1),
+  list(K = 1000, r = .15, sigma = .1),
+  list(K = 900, r = .3, sigma = .01)
+)
+```
+
+Now it is really easy to see why we need the “list of lists” format – there is one list for each chain; but remember, you require the same structure for a single chain, that is, a list of lists. 
+
+Which variables in your JAGS code require initialization? All unknown quantities that appear on the left hand side of the conditioning in the posterior distribution require initial values. Think about it this way. When you were writing your own MCMC algorithm, every chain required a value as the first element in the vector holding the chain. That is what you are doing when you specify initial conditions here. You can get away without explicitly specifying initial values – JAGS will choose them for you if you don’t specify them – however, we strongly urge you to provide explicit initial values, particularly when your priors are vague. This habit also forces you to think about what you are estimating.
+
+The left hand side of the `=` corresponds to variable name for the data in the `JAGS` program and the right hand side of the `=` is what they are called in `R`.
+
+```{r, eval=FALSE}
+rm(list = ls())
+library(SESYNCBayes)
+library(rjags)
+# SESYNCBayes which has the data frame Logistic, which we then order by PopulationSize
+Logistic = SESYNCBayes::Logistic[order(Logistic$PopulationSize),]
+# specify the initial conditions for the MCMC chain 
+inits = list(
+  list(K = 1500, r = .2, sigma = 1),
+  list(K = 1000, r = .15, sigma = .1),
+  list(K = 900, r = .3, sigma = .01)
+)
+# specify the data that will be used by your JAGS program
+  #the execution of JAGS is about 5 times faster on double precision than on integers.
+hey_data = list(
+  n = nrow(SESYNCBayes::Logistic), # n is required in the JAGS program to index the for structure
+  x = as.double(SESYNCBayes::Logistic$PopulationSize),
+  y = as.double(SESYNCBayes::Logistic$GrowthRate)
+)
+# specify 3 scalars, n.adapt, n.update, and n.iter
+# n.adapt = number of iterations that JAGS will use to choose the sampler 
+  # and to assure optimum mixing of the MCMC chain
+n.adapt = 1000
+# n.update = number of iterations that will be discarded to allow the chain to 
+#   converge before iterations are stored (aka, burn-in)
+n.update = 10000
+# n.iter = number of iterations that will be stored in the 
+  # final chain as samples from the posterior distribution
+n.iter = 10000
+######################
+# Call to JAGS
+######################
+set.seed(1)
+jm = rjags::jags.model(
+  file = "LogisticJAGS.R"
+  , data = hey_data
+  , inits = inits
+  , n.chains = length(inits)
+  , n.adapt = n.adapt
+)
+stats::update(jm, n.iter = n.update)
+zm = rjags::coda.samples(
+  model = jm
+  , variable.names = c("K", "r", "sigma", "tau")
+  , n.iter = n.iter
+  , n.thin = 1
+)
+```
+
+# Exercise 4: Coding the model. 
+
+Write `R` code (algorithm 3) to run the JAGS model (algorithm 2) and estimate the parameters, $r,K,\sigma$ and $\tau$. We suggest you insert the JAGS model into this `R` script using the sink command as shown in algorithm 4 because this model is small. You will find this a convenient way to keep all your code in the same R script. For larger models, you will be happier using a separate file for the JAGS code.
+
+```{r, eval=TRUE}
+##################################################################
+# insert JAGS model code into an R script
+##################################################################
+{ # Extra bracket needed only for R markdown files - see answers
+  sink("LogisticJAGS.R") # This is the file name for the jags code
+  cat("
+  ## Logistic example for Primer
+    model{
+      # priors
+      K ~ dunif(0, 4000) # dunif(alpha = lower limit, beta = upper limit)
+      r ~ dunif (0, 2) # dunif(alpha, beta)
+      sigma ~ dunif(0, 2) # dunif(alpha, beta)
+      tau <- 1/sigma^2
+      # likelihood
+      for(i in 1:n){
+        mu[i] <- r - r/K * x[i]
+        y[i] ~ dnorm(mu[i], tau) # dnorm(mu,tau)
+      }
+    }
+  ", fill = TRUE)
+  sink()
+}
+##################################################################
+# implement model
+##################################################################
+# SESYNCBayes which has the data frame Logistic, which we then order by PopulationSize
+Logistic = SESYNCBayes::Logistic[order(Logistic$PopulationSize),]
+# specify the initial conditions for the MCMC chain 
+inits = list(
+  list(K = 1500, r = .2, sigma = 1),
+  list(K = 1000, r = .15, sigma = .1),
+  list(K = 900, r = .3, sigma = .01)
+)
+# specify the data that will be used by your JAGS program
+  #the execution of JAGS is about 5 times faster on double precision than on integers.
+hey_data = list(
+  n = nrow(SESYNCBayes::Logistic), # n is required in the JAGS program to index the for structure
+  x = as.double(SESYNCBayes::Logistic$PopulationSize),
+  y = as.double(SESYNCBayes::Logistic$GrowthRate)
+)
+# specify 3 scalars, n.adapt, n.update, and n.iter
+# n.adapt = number of iterations that JAGS will use to choose the sampler 
+  # and to assure optimum mixing of the MCMC chain
+n.adapt = 1000
+# n.update = number of iterations that will be discarded to allow the chain to 
+#   converge before iterations are stored (aka, burn-in)
+n.update = 10000
+# n.iter = number of iterations that will be stored in the 
+  # final chain as samples from the posterior distribution
+n.iter = 10000
+######################
+# Call to JAGS
+######################
+set.seed(1)
+jm = rjags::jags.model(
+  file = "LogisticJAGS.R"
+  , data = hey_data
+  , inits = inits
+  , n.chains = length(inits)
+  , n.adapt = n.adapt
+)
+stats::update(jm, n.iter = n.update)
+# save the coda object (more precisely, an mcmc.list object) to R as "zm"
+zm = rjags::coda.samples(
+  model = jm
+  , variable.names = c("K", "r", "sigma", "tau")
+  , n.iter = n.iter
+  , n.thin = 1
+)
+#####################
+# check output
+#####################
+MCMCvis::MCMCsummary(zm)
+# chain 1 first 6 iterations
+zm[[1]][1:6,]
+```
+
+# Exercise 5: Understanding coda objects.
+
+1) Convert the coda object `zm`, into a data frame using `df = as.data.frame(rbind(zm[[1]], zm[[2]], zm[[3]]))` Note the double brackets, which effectively unlist each element of `zm`, allowing them to be combined. Another way to do this is `do.call(rbind,zm)`.
+2) Look at the first six rows of the data frame.
+3) Find the maximum value of $\sigma$.
+4) Find the mean of $r$ for the first 1000 iterations.
+5) Find the mean of $r$ after the first 1000 iterations.
+6) Make two publication quality plots of the marginal posterior density of `K`, one as a smooth curve and the other as a histogram.
+7) Compute the probability that $K > 1600$. Hint: what type of probability distribution would you use for this computation? Investigate the the dramatically useful R function `ecdf()`.
+8) Compute the probability that $1000 < K < 1600$.
+9) Compute the .025 and .975 quantiles of $K$. Hint–use the R `quantile()` function. This is an equal-tailed Bayesian credible interval on K.
+
+
+## 1) Convert the coda object `zm`, into a data frame using `df = as.data.frame(rbind(zm[[1]], zm[[2]], zm[[3]]))` Note the double brackets, which effectively unlist each element of `zm`, allowing them to be combined. Another way to do this is `do.call(rbind,zm)`.
+
+```{r}
+#########################################
+#########################################
+# only need to do this if want a column denoting the chain #
+#########################################
+#########################################
+# function to transform to data frame and 
+  # store chain number and iteration as variable
+df_fn <- function(x){
+  as.data.frame(zm[[x]]) %>% 
+    dplyr::mutate(
+      chain = x
+      , iteration = dplyr::row_number()
+    )
+}
+# pass zm to function
+zm_df <- 1:length(zm) %>% 
+  purrr::map(df_fn) %>% # purrr::map returns a list of data frames in this case...
+  dplyr::bind_rows() # ...which we bind together
+```
+
+
+## 2) Look at the first six rows of the data frame.
+
+```{r}
+zm_df %>% 
+  dplyr::slice_head(n = 6)
+```
+
+
+## 3) Find the maximum value of $\sigma$.
+
+```{r}
+max(zm_df$sigma)
+```
+
+
+## 4) Find the mean of $r$ for the first 1000 iterations.
+
+```{r}
+mean(zm_df$r[zm_df$iteration <= 1000])
+```
+
+
+## 5) Find the mean of $r$ after the first 1000 iterations.
+
+```{r}
+mean(zm_df$r[zm_df$iteration > 1000])
+```
+
+
+## 6) Make two publication quality plots of the marginal posterior density of `K`, one as a smooth curve and the other as a histogram.
+
+```{r}
+ggplot(
+    data = zm_df
+    , mapping = aes(x = K)
+  ) +
+  geom_histogram(
+    aes(y = ..density..)
+    , bins = 100
+    , fill = "navy"
+    , alpha = 0.8
+    , color = "gray25"
+  ) +
+  xlab(latex2exp::TeX("$K$ sample value")) +
+  ylab("Density") +
+  labs(
+    title = latex2exp::TeX("Marginal posterior density of $K$")
+  ) +
+  theme_bw()
+```
+
+```{r}
+ggplot(
+    data = zm_df
+    , mapping = aes(x = K)
+  ) +
+  geom_density(
+    aes(y = ..density..)
+    , linetype = 2
+    , lwd = 1.2
+    , color = "navy"
+  ) +
+  xlab(latex2exp::TeX("$K$ sample value")) +
+  ylab("Density") +
+  labs(
+    title = latex2exp::TeX("Marginal posterior density of $K$")
+  ) +
+  theme_bw()
+```
+
+
+## 7) Compute the probability that $K > 1600$. Hint: what type of probability distribution would you use for this computation? Investigate the the dramatically useful R function `ecdf()`.
+
+```{r}
+# Find the probability that the parameter K exceeds 1600
+1 - stats::ecdf(zm_df$K)(1600)
+```
+
+
+## 8) Compute the probability that $1000 < K < 1600$.
+```{r}
+# Find the probability that the parameter 1000 < K < 1300 
+stats::ecdf(zm_df$K)(1300) - stats::ecdf(zm_df$K)(1000)
+```
+
+
+## 9) Compute the .025 and .975 quantiles of $K$. Hint–use the R `quantile()` function. This is an equal-tailed Bayesian credible interval on K.
+
+```{r}
+quantile(zm_df$K, probs = c(.025, .975))
+```
+
+# Exercise 6: Using `MCMCsummary`
+1) Summarize the coda output from the logistic model with 4 significant digits. Include `Rhat` and effective sample size diagnostics (more about these soon).
+2) Summarize the coda output for $r$ alone.
+
+## 1) Summarize the coda output from the logistic model with 4 significant digits. Include `Rhat` and effective sample size diagnostics (more about these soon).
+
+```{r}
+MCMCvis::MCMCsummary(zm, digits = 4, Rhat = TRUE, n.eff = TRUE)
+```
+
+
+## 2) Summarize the coda output for $r$ alone.
+
+```{r}
+MCMCvis::MCMCsummary(zm, params = c("r"), digits = 4, Rhat = TRUE, n.eff = TRUE)
+```
+
