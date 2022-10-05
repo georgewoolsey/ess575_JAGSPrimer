@@ -45,10 +45,12 @@ library(latex2exp)
 # visualization
 library(ggpubr)
 library(cowplot)
+library(kableExtra)
 # jags
 library(rjags)
 library(SESYNCBayes)
 library(MCMCvis)
+library(HDInterval)
 
 # knit options
 knitr::opts_chunk$set(
@@ -214,7 +216,7 @@ jm = rjags::jags.model(
 stats::update(jm, n.iter = n.update)
 zm = rjags::coda.samples(
   model = jm
-  , variable.names = c("K", "r", "sigma", "tau")
+  , variable.names = c("K", "r", "sigma", "tau", "mu")
   , n.iter = n.iter
   , n.thin = 1
 )
@@ -290,16 +292,16 @@ stats::update(jm, n.iter = n.update)
 # save the coda object (more precisely, an mcmc.list object) to R as "zm"
 zm = rjags::coda.samples(
   model = jm
-  , variable.names = c("K", "r", "sigma", "tau")
+  , variable.names = c("K", "r", "sigma", "tau", "mu")
   , n.iter = n.iter
   , n.thin = 1
 )
 #####################
 # check output
 #####################
-MCMCvis::MCMCsummary(zm)
-# chain 1 first 6 iterations
-zm[[1]][1:6,]
+MCMCvis::MCMCsummary(zm, params = c("K", "r", "sigma", "tau"))
+# chain 1 first 6 iterations and specific columns
+zm[[1]][1:6, c("K", "r", "sigma", "tau")]
 ```
 
 # Exercise 5: Understanding coda objects.
@@ -326,7 +328,8 @@ zm[[1]][1:6,]
 # function to transform to data frame and 
   # store chain number and iteration as variable
 df_fn <- function(x){
-  as.data.frame(zm[[x]]) %>% 
+  # as.data.frame(zm[[x]]) %>% # if want all columns! 
+  as.data.frame(zm[[x]][,c("K", "r", "sigma", "tau")]) %>% # if want specific columns! 
     dplyr::mutate(
       chain = x
       , iteration = dplyr::row_number()
@@ -438,7 +441,7 @@ quantile(zm_df$K, probs = c(.025, .975))
 ## 1) Summarize the coda output from the logistic model with 4 significant digits. Include `Rhat` and effective sample size diagnostics (more about these soon).
 
 ```{r}
-MCMCvis::MCMCsummary(zm, digits = 4, Rhat = TRUE, n.eff = TRUE)
+MCMCvis::MCMCsummary(zm, params = c("K", "r", "sigma", "tau"), digits = 4, Rhat = TRUE, n.eff = TRUE)
 ```
 
 
@@ -447,4 +450,245 @@ MCMCvis::MCMCsummary(zm, digits = 4, Rhat = TRUE, n.eff = TRUE)
 ```{r}
 MCMCvis::MCMCsummary(zm, params = c("r"), digits = 4, Rhat = TRUE, n.eff = TRUE)
 ```
+
+# Exercise 7: Using MCMCchains 
+
+1) Extract the chains for $r$ and $\sigma$ as a data frame using `MCMCchains` and compute their .025 and .975 quantiles from the extracted object. Display three significant digits. 
+2) Make a publication quality histogram for the chain for $\sigma$. Indicate the .025 and .975 Bayesian equal-tailed credible interval value with vertical red lines.
+3) Overlay the .95 highest posterior density interval with vertical lines in blue. This is a "learn on your own" problem intended to allow you to rehearse the most important goal of this class: being sufficiently confident to figure things out. Load the package `HDInterval`, enter `?HDInterval` at the console and follow your nose. Also see Hobbs and Hooten Figure 8.2.1.
+
+
+## 1) Extract the chains for $r$ and $\sigma$ as a data frame using `MCMCchains` and compute their .025 and .975 quantiles from the extracted object. Display three significant digits. 
+
+```{r}
+temp_df <- MCMCvis::MCMCchains(zm, params = c("r", "sigma")) %>% 
+  as.data.frame()
+# quantiles
+qtiles <- c(.025, .975)
+# quantiles of r
+qtile_r <- quantile(temp_df$r, probs = qtiles) %>%
+  data.frame(
+    quantile = scales::percent(qtiles, accuracy = 0.1)
+    , r = .
+  )
+rownames(qtile_r) <- NULL
+kableExtra::kable(qtile_r, digits=3) %>% 
+  kableExtra::kable_styling(latex_options = "HOLD_position")
+
+# quantiles of sigma
+# quantiles of r
+qtile_sigma <- quantile(temp_df$sigma, probs = qtiles) %>%
+  data.frame(
+    quantile = scales::percent(qtiles, accuracy = 0.1)
+    , sigma = .
+  )
+rownames(qtile_sigma) <- NULL
+kableExtra::kable(qtile_sigma, digits=3) %>% 
+  kableExtra::kable_styling(latex_options = "HOLD_position")
+
+```
+
+
+## 2) Make a publication quality histogram for the chain for $\sigma$. Indicate the .025 and .975 Bayesian equal-tailed credible interval value with vertical red lines.
+
+```{r}
+ggplot(
+    data = temp_df
+    , mapping = aes(x = sigma)
+  ) +
+  geom_histogram(
+    aes(y = ..density..)
+    , bins = 100
+    , fill = "steelblue"
+    , alpha = 0.8
+    , color = "gray25"
+  ) +
+  geom_vline(
+    xintercept = qtile_sigma$sigma
+    , color = "firebrick"
+    , linetype = "dashed"
+    , lwd = 1.1
+  ) +
+  geom_text(
+    data = qtile_sigma
+    , mapping = aes(x = sigma*1.025, y = 150, label = quantile)
+  ) +
+  xlab(latex2exp::TeX("$\\sigma$ sample value")) +
+  ylab("Density") +
+  labs(
+    title = latex2exp::TeX("Marginal posterior density of $\\sigma$")
+  ) +
+  theme_bw()
+```
+
+
+## 3) Overlay the .95 highest posterior density interval with vertical lines in blue. This is a "learn on your own" problem intended to allow you to rehearse the most important goal of this class: being sufficiently confident to figure things out. Load the package `HDInterval`, enter `?HDInterval` at the console and follow your nose. Also see Hobbs and Hooten Figure 8.2.1.
+
+```{r}
+hdi_95 <- HDInterval::hdi(temp_df$sigma, credMass = 0.95)
+
+ggplot(
+    data = temp_df
+    , mapping = aes(x = sigma)
+  ) +
+  geom_histogram(
+    aes(y = ..density..)
+    , bins = 100
+    , fill = "steelblue"
+    , alpha = 0.8
+    , color = "gray25"
+  ) +
+  geom_vline(
+    xintercept = qtile_sigma$sigma
+    , color = "firebrick"
+    , linetype = "dashed"
+    , lwd = 1.1
+  ) +
+  geom_text(
+    data = qtile_sigma
+    , mapping = aes(x = sigma*1.025, y = 150, label = quantile)
+  ) +
+  geom_vline(
+    xintercept = hdi_95
+    , color = "royalblue"
+    , linetype = "dotted"
+    , lwd = 1
+  ) +
+  geom_segment(
+    mapping = aes(y = 20, yend = 20, x = hdi_95[1], xend = hdi_95[2])
+    , color = "royalblue"
+    , lwd = 1.5
+  ) +
+  xlab(latex2exp::TeX("$\\sigma$ sample value")) +
+  ylab("Density") +
+  labs(
+    title = latex2exp::TeX("Marginal posterior density of $\\sigma$")
+  ) +
+  theme_bw()
+
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(temp_df)
+gc()
+```
+
+
+# Exercise 8: Plotting model predictions using the MCMCpstr formatting.
+
+1) Plot the observations of per-capita growth rate as a function of observed population size. Be sure that the population size data are sorted from lowest to highest as described above
+2) Overlay the median of the model predictions as a solid black line.
+3) Overlay the 95% credible intervals as dashed lines in red.
+4) Overlay the 95% highest posterior density intervals as dashed lines in blue.
+5) What do you note about these two intervals? Will this always be the case? Why or why not?
+6) What do the dashed lines represent? What inferential statement can we make about mu relative these lines?
+
+## 1) Plot the observations of per-capita growth rate as a function of observed population size. Be sure that the population size data are sorted from lowest to highest as described above
+
+```{r}
+ggplot(data = hey_data %>% dplyr::bind_cols(), mapping  = aes(x = x, y = y)) + 
+  geom_point(color = "gray60") +
+  geom_smooth(method = "lm", color = "gray35", alpha = 0.2) +
+  xlab("Population Size") +
+  ylab("Growth Rate") +
+  labs(
+    title = "Observed per-capita growth rate as a function of observed population size"
+    , subtitle = "*Simple linear regression model estimate shown"
+  ) +
+  theme_bw()
+```
+
+
+## 2) Overlay the median of the model predictions as a solid black line.
+
+```{r}
+# create data frame
+temp_df <- dplyr::bind_cols(
+    hey_data
+    , mu_median = MCMCvis::MCMCpstr(zm, params = "mu", func = median) %>% unlist()
+  )
+# plot
+ggplot(data = temp_df) + 
+  geom_point(mapping  = aes(x = x, y = y), color = "gray60") +
+  geom_line(mapping  = aes(x = x, y = mu_median), color = "black", lwd = 1.1) +
+  xlab("Population Size") +
+  ylab("Growth Rate") +
+  labs(
+    title = "Observed per-capita growth rate as a function of observed population size"
+    , subtitle = "*Median of the model predictions shown as line"
+  ) +
+  theme_bw()
+
+```
+
+
+## 3) Overlay the 95% credible intervals as dashed lines in red.
+
+```{r}
+temp_df <- temp_df %>% 
+  dplyr::bind_cols(
+    MCMCvis::MCMCpstr(zm, params = "mu", func = function(x) quantile(x, c(0.025, 0.975))) %>% as.data.frame()
+  )
+
+# plot
+ggplot(data = temp_df) + 
+  geom_point(mapping  = aes(x = x, y = y), color = "gray60") +
+  geom_line(mapping  = aes(x = x, y = mu_median), color = "black", lwd = 1.1) +
+  geom_line(mapping  = aes(x = x, y = mu.2.5.), color = "firebrick", lwd = 1, linetype = "dashed") +
+  geom_line(mapping  = aes(x = x, y = mu.97.5.), color = "firebrick", lwd = 1, linetype = "dashed") +
+  xlab("Population Size") +
+  ylab("Growth Rate") +
+  labs(
+    title = "Observed per-capita growth rate as a function of observed population size"
+    , subtitle = "*Median of the model predictions and 95% credible intervals shown"
+  ) +
+  theme_bw()
+
+```
+
+
+## 4) Overlay the 95% highest posterior density intervals as dashed lines in blue.
+
+```{r}
+temp_df <- temp_df %>% 
+  dplyr::bind_cols(
+    MCMCvis::MCMCpstr(zm, params = "mu", func = function(x) HDInterval::hdi(x, credMass = 0.95)) %>% as.data.frame()
+  )
+
+# plot
+ggplot(data = temp_df) + 
+  geom_point(mapping  = aes(x = x, y = y), color = "gray60") +
+  geom_line(mapping  = aes(x = x, y = mu_median), color = "black", lwd = 1.1) +
+  geom_line(mapping  = aes(x = x, y = mu.2.5.), color = "firebrick", lwd = 1.1, linetype = "dashed") +
+  geom_line(mapping  = aes(x = x, y = mu.97.5.), color = "firebrick", lwd = 1.1, linetype = "dashed") +
+  geom_line(mapping  = aes(x = x, y = mu.upper), color = "royalblue", lwd = 1, linetype = "dashed") +
+  geom_line(mapping  = aes(x = x, y = mu.lower), color = "royalblue", lwd = 1, linetype = "dashed") +
+  xlab("Population Size") +
+  ylab("Growth Rate") +
+  labs(
+    title = "Observed per-capita growth rate as a function of observed population size"
+    , subtitle = "*Median of the model predictions, 95% credible intervals, & 95% highest posterior density intervals shown"
+  ) +
+  theme_bw() +
+  theme(
+    plot.subtitle = element_text(size = 9)
+  )
+
+```
+
+
+## 5) What do you note about these two intervals? Will this always be the case? Why or why not?
+
+```{r}
+
+```
+
+
+## 6) What do the dashed lines represent? What inferential statement can we make about mu relative these lines?
+
+```{r}
+
+```
+
+
 
