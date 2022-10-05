@@ -51,6 +51,7 @@ library(rjags)
 library(SESYNCBayes)
 library(MCMCvis)
 library(HDInterval)
+library(coda)
 
 # knit options
 knitr::opts_chunk$set(
@@ -216,7 +217,7 @@ jm = rjags::jags.model(
 stats::update(jm, n.iter = n.update)
 zm = rjags::coda.samples(
   model = jm
-  , variable.names = c("K", "r", "sigma", "tau", "mu")
+  , variable.names = c("K", "r", "sigma", "tau")
   , n.iter = n.iter
   , n.thin = 1
 )
@@ -292,7 +293,7 @@ stats::update(jm, n.iter = n.update)
 # save the coda object (more precisely, an mcmc.list object) to R as "zm"
 zm = rjags::coda.samples(
   model = jm
-  , variable.names = c("K", "r", "sigma", "tau", "mu")
+  , variable.names = c("K", "r", "sigma", "tau")
   , n.iter = n.iter
   , n.thin = 1
 )
@@ -301,7 +302,8 @@ zm = rjags::coda.samples(
 #####################
 MCMCvis::MCMCsummary(zm, params = c("K", "r", "sigma", "tau"))
 # chain 1 first 6 iterations and specific columns
-zm[[1]][1:6, c("K", "r", "sigma", "tau")]
+zm[[1]][1:6, ]
+# zm[[1]][1:6, c("K", "r", "sigma", "tau")] # for specific params
 ```
 
 # Exercise 5: Understanding coda objects.
@@ -328,8 +330,8 @@ zm[[1]][1:6, c("K", "r", "sigma", "tau")]
 # function to transform to data frame and 
   # store chain number and iteration as variable
 df_fn <- function(x){
-  # as.data.frame(zm[[x]]) %>% # if want all columns! 
-  as.data.frame(zm[[x]][,c("K", "r", "sigma", "tau")]) %>% # if want specific columns! 
+  as.data.frame(zm[[x]]) %>% # if want all columns!
+  # as.data.frame(zm[[x]][,c("K", "r", "sigma", "tau")]) %>% # if want specific columns! 
     dplyr::mutate(
       chain = x
       , iteration = dplyr::row_number()
@@ -583,6 +585,14 @@ gc()
 5) What do you note about these two intervals? Will this always be the case? Why or why not?
 6) What do the dashed lines represent? What inferential statement can we make about mu relative these lines?
 
+Presume you would like to get posterior distributions on the *predictions* of your regression model for each of the $x$ values. Note in the JAGS code that we make this prediction as `mu[i] <- r - r / K * x[i]`. Making predictions requires no more than adding `mu` to the list of
+random variables being monitored by changing your coda.samples statement to read:
+
+```{r}
+zm = coda.samples(jm, variable.names = c("K", "r", "sigma", "mu"),  n.iter = 10000)
+```
+
+
 ## 1) Plot the observations of per-capita growth rate as a function of observed population size. Be sure that the population size data are sorted from lowest to highest as described above
 
 ```{r}
@@ -679,16 +689,77 @@ ggplot(data = temp_df) +
 
 ## 5) What do you note about these two intervals? Will this always be the case? Why or why not?
 
-```{r}
-
-```
-
+\textcolor{violet}{The intervals are exactly overlapping in this particular case. Such overlap will not always occur. Equal-tailed intervals based on quantiles will be broader than highest posterior density intervals when marginal posterior distributions are asymmetric.}
 
 ## 6) What do the dashed lines represent? What inferential statement can we make about mu relative these lines?
 
-```{r}
+\textcolor{violet}{There is a 95% probability that the true value of the mean per-capita population growth rate falls between these lines. Not that this differs from the prediction of a new observation of population growth rate, which would have much broader credible intervals.}
 
+# Exercise 9: Creating caterpillar plots with MCMCplot. 
+
+Use the `MCMCplot` function to create caterpillar plots to visualize the posterior densities for mu using the coda object zm from earlier. Then use `?MCMCplot` to explore different plotting options. There are lots of these options, including ways to make the plots publication quality, show overlap with zero, etc.
+
+```{r}
+MCMCvis::MCMCplot(zm, params = "mu")
+```
+
+# Exercise 10: Assessing convergence. 
+
+Rerun the logistic model with n.adapt = 100.
+
+```{r}
+n.adapt = 100
+jm.short = jags.model("LogisticJAGS.R", data = hey_data, inits = inits, n.chains = length(inits), n.adapt = n.adapt)
+```
+
+1) Keep the next 500 iterations. Assess convergence visually with MCMCtrace and with the Gelman-Rubin, Heidelberger and Welch, and Raftery diagnostics. 
+
+```{r}
+n.iter = 500
+zm.short = coda.samples(jm.short, variable.names = c("K", "r", "sigma", "tau"), n.iter = n.iter, n.thin = 1)
+MCMCvis::MCMCtrace(zm.short, pdf = FALSE)
+# Gelman-Rubin diagnostic
+coda::gelman.diag(zm.short)
+# Heidelberger and Welch diagnostic
+coda::heidel.diag(zm.short)
+# Raftery diagnostic
+coda::raftery.diag(zm.short)
+```
+
+2. Update another 500 iterations and then keep 500 more iterations. Repeat your assessment of convergence. 
+
+```{r}
+n.update = 500
+update(jm.short, n.iter = n.update)
+n.iter = 500
+zm.short = coda.samples(jm.short, variable.names = c("K", "r", "sigma", "tau"), n.iter = n.iter, n.thin = 1)
+MCMCvis::MCMCtrace(zm.short, pdf = FALSE)
+# Gelman-Rubin diagnostic
+coda::gelman.diag(zm.short)
+# Heidelberger and Welch diagnostic
+coda::heidel.diag(zm.short)
+# Raftery diagnostic
+coda::raftery.diag(zm.short)
 ```
 
 
+3. Repeat steps 1 and 2 until you feel you have reached convergence. 
+
+```{r}
+n.update = 10000
+update(jm.short, n.iter = n.update)
+n.iter = 5000
+zm.short = coda.samples(jm.short, variable.names = c("K", "r", "sigma", "tau"), n.iter = n.iter, n.thin = 1)
+MCMCvis::MCMCtrace(zm.short, pdf = FALSE)
+# Gelman-Rubin diagnostic
+coda::gelman.diag(zm.short)
+# Heidelberger and Welch diagnostic
+coda::heidel.diag(zm.short)
+# Raftery diagnostic
+coda::raftery.diag(zm.short)
+```
+
+
+
+4. Change the adapt phase to zero and repeat steps 1 – 4. What happens?
 
